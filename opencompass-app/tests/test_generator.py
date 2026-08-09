@@ -84,7 +84,7 @@ def test_atomic_write_uses_replace(tmp_path, monkeypatch):
         datasets=[DatasetItem(abbr="gsm8k")],
         models=[ModelItem(type="opencompass.models.openai_api.OpenAISDK", path="qwen")],
     )
-    path = asyncio.run(generate_config(req))
+    asyncio.run(generate_config(req))
     assert len(calls) == 1
     src, dst = calls[0]
     assert str(src).endswith(".py.tmp")

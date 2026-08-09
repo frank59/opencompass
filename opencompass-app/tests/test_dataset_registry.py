@@ -1,8 +1,7 @@
-from pathlib import Path
 
 import pytest
 
-from app.core.dataset_registry import DatasetRegistry, _DATASET_INDEX_PATH
+from app.core.dataset_registry import _DATASET_INDEX_PATH, DatasetRegistry
 
 
 def test_load_returns_dict_with_abbr_keys():
@@ -32,7 +31,7 @@ def test_resolve_builtin_unknown_raises():
 
 def test_load_is_cached_after_first_call(monkeypatch):
     DatasetRegistry._INDEX = None
-    first = DatasetRegistry._load()
+    DatasetRegistry._load()
     # mutate dict：验证第二次调用返回相同引用（缓存）
     DatasetRegistry._INDEX["poison"] = ("a", "b")
     second = DatasetRegistry._load()

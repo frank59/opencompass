@@ -6,11 +6,11 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from app.api.jobs import router as jobs_router
-from app.api.workers import router as workers_router, health_router
+from app.api.workers import health_router
+from app.api.workers import router as workers_router
 from app.core.settings import Settings
 from app.core.state import InstanceState
 from app.stores.nfs_state import JobStateStore
-
 
 state_store: JobStateStore | None = None
 instance_state: InstanceState | None = None

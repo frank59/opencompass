@@ -1,7 +1,9 @@
+import re
+
 import pytest
+
 from app.utils.ids import is_valid_job_id
 from app.utils.time import now_iso
-import re
 
 
 @pytest.mark.parametrize(

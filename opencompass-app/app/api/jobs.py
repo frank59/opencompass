@@ -15,7 +15,6 @@ from app.oc_config.generator import generate_config
 from app.utils.ids import is_valid_job_id
 from app.utils.time import now_iso
 
-
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
 
@@ -32,13 +31,13 @@ def _validate_request(req: CreateJobRequest) -> None:
             try:
                 DatasetWhitelist.validate_dataset_item(item)
             except ValueError as e:
-                raise HTTPException(422, str(e))
+                raise HTTPException(422, str(e)) from e
 
     for m in req.models:
         try:
             ModelWhitelist.validate(m.model_dump())
         except ValueError as e:
-            raise HTTPException(422, str(e))
+            raise HTTPException(422, str(e)) from e
 
 
 @router.post("", status_code=201, response_model=JobResponse)
@@ -63,7 +62,7 @@ async def create_job(req: CreateJobRequest) -> JobResponse:
         config_path = await generate_config(req)
     except Exception as e:
         await inst.release(req.job_id)
-        raise HTTPException(500, f"generate_config failed: {e}")
+        raise HTTPException(500, f"generate_config failed: {e}") from e
 
     work_dir = str(Path(config_path).parent.parent)
 
@@ -95,7 +94,7 @@ async def create_job(req: CreateJobRequest) -> JobResponse:
             "finished_at": now_iso(),
             "error_message": f"subprocess start failed: {e}",
         })
-        raise HTTPException(500, f"subprocess start failed: {e}")
+        raise HTTPException(500, f"subprocess start failed: {e}") from e
 
     inst.track_process(req.job_id, proc)
     store.write_atomic(req.job_id, {

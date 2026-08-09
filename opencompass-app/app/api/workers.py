@@ -5,7 +5,6 @@ from fastapi import APIRouter
 
 from app.models.response import FreeWorkerCount, HealthCheck
 
-
 router = APIRouter(prefix="/api/v1/workers", tags=["workers"])
 health_router = APIRouter(tags=["health"])
 

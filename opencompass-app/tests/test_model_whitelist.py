@@ -37,7 +37,6 @@ def test_types_returns_frozenset():
 
 def test_types_empty_when_oc_not_installed(monkeypatch):
     """模拟 opencompass.models 不可导入 → 应回退为 empty frozenset。"""
-    import importlib
 
     # 通过直接 monkeypatch scan 函数返回空集
     def fake_scan():
