@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
+from app.api.jobs import router as jobs_router
 from app.api.workers import router as workers_router, health_router
 from app.core.settings import Settings
 from app.core.state import InstanceState
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="opencompass-app", lifespan=lifespan)
     app.include_router(workers_router)
     app.include_router(health_router)
+    app.include_router(jobs_router)
     return app
 
 
