@@ -10,10 +10,8 @@ from pathlib import Path
 
 import yaml
 
-
-def _dataset_index_path() -> Path:
-    """测试时可被 monkeypatch 替换。"""
-    return Path(__file__).parent.parent / "data" / "dataset_index.yaml"
+# 测试时可被 monkeypatch 替换的实际索引文件路径。
+_DATASET_INDEX_PATH: Path = Path(__file__).parent.parent / "data" / "dataset_index.yaml"
 
 
 class DatasetRegistry:
@@ -40,7 +38,7 @@ class DatasetRegistry:
     def _load(cls) -> dict[str, tuple[str, str]]:
         if cls._INDEX is not None:
             return cls._INDEX
-        cls._INDEX = cls._load_with_path(_dataset_index_path())
+        cls._INDEX = cls._load_with_path(_DATASET_INDEX_PATH)
         return cls._INDEX
 
     @classmethod

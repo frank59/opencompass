@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core.dataset_registry import DatasetRegistry, _dataset_index_path
+from app.core.dataset_registry import DatasetRegistry, _DATASET_INDEX_PATH
 
 
 def test_load_returns_dict_with_abbr_keys():
@@ -48,6 +48,6 @@ def test_load_with_path_supports_alternate_file(tmp_path):
 
 
 def test_dataset_index_path_default():
-    p = _dataset_index_path()
+    p = _DATASET_INDEX_PATH
     assert p.name == "dataset_index.yaml"
     assert str(p).endswith("data/dataset_index.yaml")
