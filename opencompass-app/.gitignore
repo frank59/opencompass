@@ -8,3 +8,8 @@ venv/
 *.tmp
 .coverage
 htmlcov/
+
+# 父级 .gitignore 用 *.txt / *.json / *.csv / *.jsonl 屏蔽 OC 数据集文件。
+# opencompass-app 内需要跟踪部分同类扩展名（requirements.txt、tests/*.json 等）。
+# 仅在 opencompass-app/ 下生效，不影响父级规则。
+!requirements.txt
