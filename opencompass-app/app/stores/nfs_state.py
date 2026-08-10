@@ -49,6 +49,13 @@ class JobStateStore:
     def exists(self, job_id: str) -> bool:
         return self._path(job_id).exists()
 
+    def delete(self, job_id: str) -> None:
+        """删除任务状态文件；不存在则静默成功。"""
+        try:
+            self._path(job_id).unlink()
+        except FileNotFoundError:
+            pass
+
     def list_ids(self) -> list[str]:
         """列出所有 job_id；排除以点号开头（tmp 文件）。"""
         ids = []

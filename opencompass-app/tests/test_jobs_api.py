@@ -305,3 +305,43 @@ def test_get_jobs_pagination(client):
     assert len(r2.json()["items"]) == 2
     r3 = client.get("/api/v1/jobs?limit=2&offset=4")
     assert len(r3.json()["items"]) == 1
+
+
+def test_delete_job_204_for_terminal(client):
+    from app import main as app_main
+    from app.models.enums import JobStatus
+    from app.utils.time import now_iso
+    store = app_main.state_store
+    store.write_atomic("j_del", {
+        "job_id": "j_del", "status": JobStatus.COMPLETED.value,
+        "instance_id": app_main.instance_state.instance_id,
+        "datasets": [], "models": [], "config_path": "/x", "work_dir": "/y",
+        "created_at": now_iso(), "started_at": now_iso(),
+        "finished_at": now_iso(), "exit_code": 0, "error_message": None,
+        "pid": None, "created_by": None,
+    })
+    res = client.delete("/api/v1/jobs/j_del")
+    assert res.status_code == 204
+    assert store.read("j_del") is None
+
+
+def test_delete_job_404_when_missing(client):
+    res = client.delete("/api/v1/jobs/no_such_xyz")
+    assert res.status_code == 404
+
+
+def test_delete_job_409_when_running(client):
+    from app import main as app_main
+    from app.models.enums import JobStatus
+    from app.utils.time import now_iso
+    store = app_main.state_store
+    store.write_atomic("j_running", {
+        "job_id": "j_running", "status": JobStatus.RUNNING.value,
+        "instance_id": app_main.instance_state.instance_id,
+        "datasets": [], "models": [], "config_path": "/x", "work_dir": "/y",
+        "created_at": now_iso(), "started_at": now_iso(),
+        "finished_at": None, "exit_code": None, "error_message": None,
+        "pid": None, "created_by": None,
+    })
+    res = client.delete("/api/v1/jobs/j_running")
+    assert res.status_code == 409

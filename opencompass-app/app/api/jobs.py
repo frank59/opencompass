@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.core.dataset_registry import DatasetRegistry
 from app.core.dataset_whitelist import DatasetWhitelist
-from app.core.job_state_machine import can_stop
+from app.core.job_state_machine import can_delete, can_stop
 from app.core.model_whitelist import ModelWhitelist
 from app.executor import subprocess_runner
 from app.models.enums import JobStatus
@@ -198,3 +198,19 @@ async def list_jobs(
         limit=limit,
         offset=offset,
     )
+
+
+@router.delete("/{job_id}", status_code=204)
+async def delete_job(job_id: str) -> None:
+    """删除任务：仅终态允许。"""
+    from app.main import get_state_store
+
+    store = get_state_store()
+    current = store.read(job_id)
+    if current is None:
+        raise HTTPException(404, "job not found")
+    if not can_delete(current.get("status", "")):
+        raise HTTPException(
+            409, f"cannot delete in status {current.get('status')}"
+        )
+    store.delete(job_id)
