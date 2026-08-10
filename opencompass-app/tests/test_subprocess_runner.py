@@ -2,7 +2,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 from app.core.state import InstanceState
-from app.executor.subprocess_runner import start, wait_and_finalize
+from app.executor.subprocess_runner import request_cancel, start, wait_and_finalize
 from app.stores.nfs_state import JobStateStore
 
 
@@ -101,3 +101,32 @@ def test_wait_and_finalize_no_op_when_state_missing(tmp_path):
     asyncio.run(instance.try_acquire("job_gone"))
     # 不抛错即可
     asyncio.run(wait_and_finalize("job_gone", proc, store, instance))
+
+
+def test_request_cancel_returns_when_proc_already_exited():
+    proc = MagicMock()
+    proc.returncode = 0
+    proc.terminate = MagicMock()
+    asyncio.run(request_cancel(proc))
+    proc.terminate.assert_not_called()
+
+
+def test_request_cancel_terminates_then_awaits_wait():
+    proc = MagicMock()
+    proc.returncode = None
+    proc.terminate = MagicMock()
+    proc.wait = AsyncMock(return_value=0)
+    asyncio.run(request_cancel(proc, grace_seconds=1))
+    proc.terminate.assert_called_once()
+    proc.wait.assert_awaited()
+
+
+def test_request_cancel_kills_after_timeout():
+    proc = MagicMock()
+    proc.returncode = None
+    proc.terminate = MagicMock()
+    proc.kill = MagicMock()
+    # wait 持续超时 → wait_for 触发 SIGKILL
+    proc.wait = AsyncMock(side_effect=asyncio.TimeoutError())
+    asyncio.run(request_cancel(proc, grace_seconds=0))
+    proc.kill.assert_called_once()

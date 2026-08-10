@@ -33,6 +33,28 @@ async def start(job_id: str, config_path: str) -> asyncio.subprocess.Process:
     return proc
 
 
+async def request_cancel(proc, grace_seconds: int = 30) -> None:
+    """SIGTERM → 异步等 grace → SIGKILL。best-effort 强制结束。"""
+    if proc.returncode is not None:
+        return
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        return
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=grace_seconds)
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        # best-effort：SIGKILL 后回收僵尸，进程死/异常状态都吞
+        try:
+            await proc.wait()
+        except Exception:
+            pass
+
+
 async def wait_and_finalize(
     job_id: str,
     proc: asyncio.subprocess.Process,
