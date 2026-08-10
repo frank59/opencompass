@@ -1,5 +1,4 @@
 """Phase 2 端到端：创建 → 列出 → 停止 → 收尾 → 删除。"""
-import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -34,10 +33,10 @@ def e2e_client(tmp_path, monkeypatch):
     monkeypatch.setattr(DatasetWhitelist, "_RETRIEVER", frozenset({"ZeroRetriever"}))
     monkeypatch.setattr(DatasetWhitelist, "_PROMPT", frozenset({"PromptTemplate"}))
 
-    import app.executor.subprocess_runner as sr
-
     # fake_start 让 wait 永远不返回 → 状态保持 running，便于后续 stop 测试
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import MagicMock
+
+    import app.executor.subprocess_runner as sr
 
     async def fake_start(job_id, config_path):
         proc = MagicMock()

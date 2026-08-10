@@ -4,7 +4,6 @@
 """
 from app.models.enums import JobStatus
 
-
 # 起始态：STARTING / RUNNING
 STARTING_OR_RUNNING = {JobStatus.STARTING.value, JobStatus.RUNNING.value}
 

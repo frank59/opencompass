@@ -262,7 +262,6 @@ def test_get_jobs_all_true_includes_other_instances(client):
 
 def test_get_jobs_filter_by_status_and_model_path(client):
     from app import main as app_main
-    from app.models.enums import JobStatus
     from app.utils.time import now_iso
     store = app_main.state_store
     mine = app_main.instance_state.instance_id
