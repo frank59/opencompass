@@ -130,3 +130,34 @@ def test_request_cancel_kills_after_timeout():
     proc.wait = AsyncMock(side_effect=asyncio.TimeoutError())
     asyncio.run(request_cancel(proc, grace_seconds=0))
     proc.kill.assert_called_once()
+
+
+def test_wait_and_finalize_marks_cancelled_when_state_is_cancelling(tmp_path):
+    store = JobStateStore(base_dir=str(tmp_path / "state" / "jobs"))
+    store.write_atomic("job_c", {"job_id": "job_c", "status": "cancelling"})
+    proc = MagicMock()
+    proc.wait = AsyncMock(return_value=0)
+    instance = InstanceState(max_concurrent=4, instance_id="test-inst")
+    asyncio.run(instance.try_acquire("job_c"))
+
+    asyncio.run(wait_and_finalize("job_c", proc, store, instance))
+
+    final = store.read("job_c")
+    assert final["status"] == "cancelled"
+    assert final["error_message"] == "cancelled by user"
+    assert instance.running_count() == 0
+
+
+def test_wait_and_finalize_keeps_completed_path_for_normal_exit(tmp_path):
+    store = JobStateStore(base_dir=str(tmp_path / "state" / "jobs"))
+    store.write_atomic("job_d", {"job_id": "job_d", "status": "running"})
+    proc = MagicMock()
+    proc.wait = AsyncMock(return_value=0)
+    instance = InstanceState(max_concurrent=4, instance_id="test-inst")
+    asyncio.run(instance.try_acquire("job_d"))
+
+    asyncio.run(wait_and_finalize("job_d", proc, store, instance))
+
+    final = store.read("job_d")
+    assert final["status"] == "completed"
+    assert final["error_message"] is None

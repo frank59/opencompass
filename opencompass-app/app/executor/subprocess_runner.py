@@ -9,6 +9,7 @@ import asyncio
 from pathlib import Path
 
 from app.core.state import InstanceState
+from app.models.enums import JobStatus
 from app.stores.nfs_state import JobStateStore
 from app.utils.time import now_iso
 
@@ -61,19 +62,28 @@ async def wait_and_finalize(
     state_store: JobStateStore,
     instance_state: InstanceState,
 ) -> None:
-    """等待进程退出，把状态收敛到 completed/failed，最后释放 worker 槽。"""
+    """等待进程退出，把状态收敛到 completed/failed/cancelled，最后释放 worker 槽。"""
     rc = await proc.wait()
     current = state_store.read(job_id)
     if current is None:
         await instance_state.release(job_id)
         return
 
-    final_status = "completed" if rc == 0 else "failed"
+    if current.get("status") == JobStatus.CANCELLING.value:
+        final_status = JobStatus.CANCELLED.value
+        err = "cancelled by user"
+    elif rc == 0:
+        final_status = JobStatus.COMPLETED.value
+        err = None
+    else:
+        final_status = JobStatus.FAILED.value
+        err = f"opencompass exit {rc}"
+
     state_store.write_atomic(job_id, {
         **current,
         "status": final_status,
         "finished_at": now_iso(),
         "exit_code": rc,
-        "error_message": None if rc == 0 else f"opencompass exit {rc}",
+        "error_message": err,
     })
     await instance_state.release(job_id)
