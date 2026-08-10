@@ -5,28 +5,31 @@ OpenCompass 评测任务的最小调度服务（FastAPI）。本服务**不**修
 
 ## 范围
 
-MVP 闭环覆盖 4 个端点：
+闭环覆盖 7 个端点（MVP 4 + Phase 2 3）：
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/api/v1/jobs` | POST | 创建并启动一个评测任务 |
-| `/api/v1/jobs/{job_id}` | GET | 查询任务状态 |
-| `/api/v1/workers/me/free` | GET | 当前实例空闲 worker 数 |
-| `/health` | GET | 健康检查 |
+| 端点 | 方法 | 说明 | 阶段 |
+|------|------|------|------|
+| `/api/v1/jobs` | POST | 创建并启动一个评测任务 | MVP |
+| `/api/v1/jobs/{job_id}` | GET | 查询任务状态 | MVP |
+| `/api/v1/jobs` | GET | 列表 + 过滤 + 分页 | Phase 2 |
+| `/api/v1/jobs/{job_id}/stop` | POST | 任务停止（CANCELLING+CANCELLED） | Phase 2 |
+| `/api/v1/jobs/{job_id}` | DELETE | 删除任务（仅限终态） | Phase 2 |
+| `/api/v1/workers/me/free` | GET | 当前实例空闲 worker 数 | MVP |
+| `/health` | GET | 健康检查 | MVP |
 
-不在 MVP 范围内：`POST /stop`、`DELETE`、`GET /jobs` 列表、`recover_after_restart`、
-`PATCH /workers/me/capacity`。
+Phase 3+ 范围：`recover_after_restart`、`PATCH /workers/me/capacity`。
 
 ## 架构图
 
 ```
 HTTP Client → FastAPI → opencompass subprocess
                 ↓
-        NFS JSON 状态文件（原子写）
+        NFS JSON 状态文件（原子写、CAS 变更）
 ```
 
 完整设计：[`docs/opencompass-scheduler-design.md`](../../docs/opencompass-scheduler-design.md)
 MVP 设计：[`docs/superpowers/specs/2026-08-09-opencompass-app-mvp-design.md`](../../docs/superpowers/specs/2026-08-09-opencompass-app-mvp-design.md)
+Phase 2 设计：[`docs/superpowers/specs/2026-08-09-opencompass-app-phase2-design.md`](../../docs/superpowers/specs/2026-08-09-opencompass-app-phase2-design.md)
 
 ## 目录结构
 
