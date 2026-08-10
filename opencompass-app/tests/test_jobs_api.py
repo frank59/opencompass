@@ -46,7 +46,12 @@ def client(fake_yaml, monkeypatch):
         proc.wait = AsyncMock(return_value=0)
         return proc
 
+    async def fake_wait_and_finalize(*args, **kwargs):
+        # noop: 让状态保持 running，避免后续 stop / list 测试被完成态干扰
+        pass
+
     monkeypatch.setattr(sr, "start", fake_start)
+    monkeypatch.setattr(sr, "wait_and_finalize", fake_wait_and_finalize)
 
     app = create_app()
     with TestClient(app) as c:
@@ -133,3 +138,74 @@ def test_post_jobs_503_when_at_capacity(client, monkeypatch):
     }
     res = client.post("/api/v1/jobs", json=req)
     assert res.status_code == 503
+
+
+def test_post_stop_202_sets_status_cancelling(client):
+    req = {
+        "job_id": "job_s1",
+        "datasets": [{"abbr": "gsm8k"}],
+        "models": [{"type": "opencompass.models.openai_api.OpenAISDK", "path": "qwen"}],
+    }
+    r = client.post("/api/v1/jobs", json=req)
+    assert r.status_code == 201
+    res = client.post("/api/v1/jobs/job_s1/stop")
+    assert res.status_code == 202, res.text
+    body = res.json()
+    assert body["status"] == "cancelling"
+    assert body["job_id"] == "job_s1"
+
+
+def test_post_stop_403_when_other_instance(client):
+    from app import main as app_main
+    from app.models.enums import JobStatus
+    from app.utils.time import now_iso
+    store = app_main.state_store
+    store.write_atomic("job_other", {
+        "job_id": "job_other", "status": JobStatus.RUNNING.value,
+        "instance_id": "OTHER-INSTANCE", "datasets": [], "models": [],
+        "config_path": "/x", "work_dir": "/y", "created_at": now_iso(),
+        "started_at": now_iso(), "finished_at": None, "exit_code": None,
+        "error_message": None, "pid": None, "created_by": None,
+    })
+    res = client.post("/api/v1/jobs/job_other/stop")
+    assert res.status_code == 403
+    assert "OTHER-INSTANCE" in res.text
+
+
+def test_post_stop_404_when_not_found(client):
+    res = client.post("/api/v1/jobs/no_such_job_xyz/stop")
+    assert res.status_code == 404
+
+
+def test_post_stop_409_when_completed(client):
+    from app import main as app_main
+    from app.models.enums import JobStatus
+    from app.utils.time import now_iso
+    store = app_main.state_store
+    store.write_atomic("job_done", {
+        "job_id": "job_done", "status": JobStatus.COMPLETED.value,
+        "instance_id": app_main.instance_state.instance_id,
+        "datasets": [], "models": [], "config_path": "/x", "work_dir": "/y",
+        "created_at": now_iso(), "started_at": now_iso(),
+        "finished_at": now_iso(), "exit_code": 0, "error_message": None,
+        "pid": None, "created_by": None,
+    })
+    res = client.post("/api/v1/jobs/job_done/stop")
+    assert res.status_code == 409
+
+
+def test_post_stop_409_when_already_cancelling(client):
+    from app import main as app_main
+    from app.models.enums import JobStatus
+    from app.utils.time import now_iso
+    store = app_main.state_store
+    store.write_atomic("job_cancelling", {
+        "job_id": "job_cancelling", "status": JobStatus.CANCELLING.value,
+        "instance_id": app_main.instance_state.instance_id,
+        "datasets": [], "models": [], "config_path": "/x", "work_dir": "/y",
+        "created_at": now_iso(), "started_at": now_iso(),
+        "finished_at": None, "exit_code": None, "error_message": None,
+        "pid": None, "created_by": None,
+    })
+    res = client.post("/api/v1/jobs/job_cancelling/stop")
+    assert res.status_code == 409

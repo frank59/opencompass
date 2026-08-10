@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.core.dataset_registry import DatasetRegistry
 from app.core.dataset_whitelist import DatasetWhitelist
+from app.core.job_state_machine import can_stop
 from app.core.model_whitelist import ModelWhitelist
 from app.executor import subprocess_runner
 from app.models.enums import JobStatus
@@ -122,3 +123,40 @@ async def get_job(job_id: str) -> JobResponse:
     if state is None:
         raise HTTPException(404, "job not found")
     return JobResponse(**state)
+
+
+@router.post("/{job_id}/stop", status_code=202)
+async def stop_job(job_id: str) -> dict:
+    """任务停止：CAS 写 STARTING/RUNNING → CANCELLING，再 SIGTERM 进程。"""
+    from app.main import get_instance_state, get_state_store
+
+    store = get_state_store()
+    inst = get_instance_state()
+
+    current = store.read(job_id)
+    if current is None:
+        raise HTTPException(404, "job not found")
+
+    if current.get("instance_id") != inst.instance_id:
+        raise HTTPException(
+            403, f"job owned by other instance: {current.get('instance_id')}"
+        )
+
+    if not can_stop(current.get("status", "")):
+        raise HTTPException(
+            409, f"cannot stop job in status {current.get('status')}"
+        )
+
+    ok = store.compare_and_swap(
+        job_id,
+        expected_status=current["status"],
+        mutation={"status": JobStatus.CANCELLING.value},
+    )
+    if not ok:
+        raise HTTPException(409, "already cancelling")
+
+    proc = inst.get_process(job_id)
+    if proc is not None:
+        asyncio.create_task(subprocess_runner.request_cancel(proc))
+
+    return {"job_id": job_id, "status": JobStatus.CANCELLING.value}
