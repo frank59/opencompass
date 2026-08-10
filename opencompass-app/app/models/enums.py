@@ -7,3 +7,5 @@ class JobStatus(str, Enum):
     FINALIZING = "finalizing"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLING = "cancelling"
+    CANCELLED = "cancelled"

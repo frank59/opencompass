@@ -2,11 +2,12 @@ from app.models.enums import JobStatus
 
 
 def test_job_status_values():
-    assert JobStatus.STARTING.value == "starting"
-    assert JobStatus.RUNNING.value == "running"
-    assert JobStatus.FINALIZING.value == "finalizing"
-    assert JobStatus.COMPLETED.value == "completed"
-    assert JobStatus.FAILED.value == "failed"
+    expected = {
+        "starting", "running", "finalizing", "completed", "failed",
+        "cancelling", "cancelled",
+    }
+    actual = {s.value for s in JobStatus}
+    assert actual == expected
 
 
 def test_job_status_is_str():
@@ -14,7 +15,7 @@ def test_job_status_is_str():
     assert JobStatus.RUNNING == "running"
 
 
-def test_job_status_no_cancelling():
-    """MVP 不含 CANCELLING/CANCELLED（Phase 2 再加）。"""
-    assert not hasattr(JobStatus, "CANCELLING")
-    assert not hasattr(JobStatus, "CANCELLED")
+def test_cancelling_and_cancelled_are_str():
+    assert JobStatus.CANCELLING == "cancelling"
+    assert JobStatus.CANCELLED == "cancelled"
+    assert isinstance(JobStatus.CANCELLING, str)

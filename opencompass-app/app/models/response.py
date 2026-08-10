@@ -19,6 +19,7 @@ class JobResponse(BaseModel):
     error_message: str | None = None
     pid: int | None = None
     created_by: str | None = None
+    cancelled_by: str | None = None
 
 
 class FreeWorkerCount(BaseModel):
@@ -30,3 +31,10 @@ class FreeWorkerCount(BaseModel):
 class HealthCheck(BaseModel):
     status: str
     checks: dict[str, str]
+
+
+class JobListResponse(BaseModel):
+    items: list[JobResponse]
+    total: int
+    limit: int
+    offset: int
