@@ -60,3 +60,17 @@ def test_write_atomic_cleans_tmp_on_failure(store, monkeypatch):
     # 目标文件也不应存在
     assert not store.exists("job_x")
     monkeypatch.setattr(mod.os, "replace", real_replace)  # 还原
+
+
+def test_list_all_returns_all_jobs(store):
+    store.write_atomic("job_a", {"job_id": "job_a", "status": "running"})
+    store.write_atomic("job_b", {"job_id": "job_b", "status": "completed"})
+    items = store.list_all()
+    assert {job_id for job_id, _ in items} == {"job_a", "job_b"}
+
+
+def test_list_all_skips_tmp_files(store):
+    store.write_atomic("job_real", {"job_id": "job_real", "status": "running"})
+    (store.base_dir / ".job_partial.tmp").write_text('{"incomplete":', encoding="utf-8")
+    items = store.list_all()
+    assert {job_id for job_id, _ in items} == {"job_real"}

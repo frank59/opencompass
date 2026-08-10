@@ -6,9 +6,12 @@
 - 原子写：tempfile.mkstemp + fsync + os.replace（NFS 友好）。
 """
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 class JobStateStore:
@@ -55,3 +58,16 @@ class JobStateStore:
             if p.suffix == ".json":
                 ids.append(p.stem)
         return ids
+
+    def list_all(self) -> list[tuple[str, dict]]:
+        """返回 (job_id, state) 列表；跳过 .tmp 失败文件。"""
+        out: list[tuple[str, dict]] = []
+        for p in sorted(self.base_dir.glob("*.json")):
+            try:
+                with open(p, encoding="utf-8") as f:
+                    data = json.load(f)
+                out.append((data["job_id"], data))
+            except (json.JSONDecodeError, KeyError, OSError):
+                log.warning("skip unreadable state file: %s", p)
+                continue
+        return out
