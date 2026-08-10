@@ -71,3 +71,15 @@ class JobStateStore:
                 log.warning("skip unreadable state file: %s", p)
                 continue
         return out
+
+    def compare_and_swap(
+        self, job_id: str, expected_status: str, mutation: dict,
+    ) -> bool:
+        """CAS 写：当前状态 == expected_status 才应用 mutation。返回是否成功。"""
+        current = self.read(job_id)
+        if current is None:
+            return False
+        if current.get("status") != expected_status:
+            return False
+        self.write_atomic(job_id, {**current, **mutation})
+        return True

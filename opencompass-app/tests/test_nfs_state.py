@@ -74,3 +74,28 @@ def test_list_all_skips_tmp_files(store):
     (store.base_dir / ".job_partial.tmp").write_text('{"incomplete":', encoding="utf-8")
     items = store.list_all()
     assert {job_id for job_id, _ in items} == {"job_real"}
+
+
+def test_compare_and_swap_succeeds_when_status_matches(store):
+    store.write_atomic("job_x", {"job_id": "job_x", "status": "running"})
+    result = store.compare_and_swap(
+        "job_x", expected_status="running", mutation={"status": "cancelling"},
+    )
+    assert result is True
+    assert store.read("job_x")["status"] == "cancelling"
+
+
+def test_compare_and_swap_fails_when_status_mismatch(store):
+    store.write_atomic("job_y", {"job_id": "job_y", "status": "completed"})
+    result = store.compare_and_swap(
+        "job_y", expected_status="running", mutation={"status": "cancelling"},
+    )
+    assert result is False
+    assert store.read("job_y")["status"] == "completed"
+
+
+def test_compare_and_swap_missing_returns_false(store):
+    result = store.compare_and_swap(
+        "job_missing", expected_status="running", mutation={"status": "cancelling"},
+    )
+    assert result is False
