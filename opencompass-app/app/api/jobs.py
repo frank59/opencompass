@@ -11,7 +11,7 @@ from app.core.model_whitelist import ModelWhitelist
 from app.executor import subprocess_runner
 from app.models.enums import JobStatus
 from app.models.request import CreateJobRequest
-from app.models.response import JobResponse
+from app.models.response import JobListResponse, JobResponse
 from app.oc_config.generator import generate_config
 from app.utils.ids import is_valid_job_id
 from app.utils.time import now_iso
@@ -160,3 +160,41 @@ async def stop_job(job_id: str) -> dict:
         asyncio.create_task(subprocess_runner.request_cancel(proc))
 
     return {"job_id": job_id, "status": JobStatus.CANCELLING.value}
+
+
+@router.get("", response_model=JobListResponse)
+async def list_jobs(
+    status: str | None = None,
+    model_path: str | None = None,
+    all: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+) -> JobListResponse:
+    """列出任务：filter + offset/limit 分页。"""
+    from app.main import get_instance_state, get_state_store
+
+    store = get_state_store()
+    inst = get_instance_state()
+
+    items = store.list_all()
+    filtered: list[dict] = []
+    for _, state in items:
+        if not all and state.get("instance_id") != inst.instance_id:
+            continue
+        if status is not None and state.get("status") != status:
+            continue
+        if model_path is not None:
+            models = state.get("models") or []
+            if not any(model_path in (m.get("path") or "") for m in models):
+                continue
+        filtered.append(state)
+
+    filtered.sort(key=lambda s: s.get("created_at") or "", reverse=True)
+    total = len(filtered)
+    page = filtered[offset:offset + limit]
+    return JobListResponse(
+        items=[JobResponse(**s) for s in page],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )

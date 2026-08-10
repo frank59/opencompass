@@ -209,3 +209,99 @@ def test_post_stop_409_when_already_cancelling(client):
     })
     res = client.post("/api/v1/jobs/job_cancelling/stop")
     assert res.status_code == 409
+
+
+def test_get_jobs_list_returns_only_owned_when_all_false(client):
+    from app import main as app_main
+    from app.models.enums import JobStatus
+    from app.utils.time import now_iso
+    store = app_main.state_store
+    for jid in ("j_own_1", "j_own_2"):
+        store.write_atomic(jid, {
+            "job_id": jid, "status": JobStatus.RUNNING.value,
+            "instance_id": app_main.instance_state.instance_id,
+            "datasets": [], "models": [], "config_path": "/x", "work_dir": "/y",
+            "created_at": now_iso(), "started_at": now_iso(),
+            "finished_at": None, "exit_code": None, "error_message": None,
+            "pid": None, "created_by": None,
+        })
+    store.write_atomic("j_other", {
+        "job_id": "j_other", "status": JobStatus.RUNNING.value,
+        "instance_id": "OTHER-INSTANCE", "datasets": [], "models": [],
+        "config_path": "/x", "work_dir": "/y", "created_at": now_iso(),
+        "started_at": now_iso(), "finished_at": None, "exit_code": None,
+        "error_message": None, "pid": None, "created_by": None,
+    })
+
+    res = client.get("/api/v1/jobs")
+    assert res.status_code == 200
+    body = res.json()
+    ids = {it["job_id"] for it in body["items"]}
+    assert "j_own_1" in ids and "j_own_2" in ids
+    assert "j_other" not in ids
+    assert body["total"] == 2
+
+
+def test_get_jobs_all_true_includes_other_instances(client):
+    from app import main as app_main
+    from app.models.enums import JobStatus
+    from app.utils.time import now_iso
+    store = app_main.state_store
+    store.write_atomic("j_o", {
+        "job_id": "j_o", "status": JobStatus.RUNNING.value,
+        "instance_id": "OTHER", "datasets": [], "models": [],
+        "config_path": "/x", "work_dir": "/y", "created_at": now_iso(),
+        "started_at": now_iso(), "finished_at": None, "exit_code": None,
+        "error_message": None, "pid": None, "created_by": None,
+    })
+
+    res = client.get("/api/v1/jobs?all=true")
+    body = res.json()
+    assert "j_o" in {it["job_id"] for it in body["items"]}
+
+
+def test_get_jobs_filter_by_status_and_model_path(client):
+    from app import main as app_main
+    from app.models.enums import JobStatus
+    from app.utils.time import now_iso
+    store = app_main.state_store
+    mine = app_main.instance_state.instance_id
+    for jid, st, mp in [
+        ("j1", "running", "qwen"),
+        ("j2", "completed", "qwen"),
+        ("j3", "running", "gpt"),
+    ]:
+        store.write_atomic(jid, {
+            "job_id": jid, "status": st, "instance_id": mine,
+            "datasets": [], "models": [{"type": "x", "path": mp}],
+            "config_path": "/x", "work_dir": "/y", "created_at": now_iso(),
+            "started_at": now_iso(), "finished_at": None, "exit_code": None,
+            "error_message": None, "pid": None, "created_by": None,
+        })
+    r1 = client.get("/api/v1/jobs?status=running")
+    assert {it["job_id"] for it in r1.json()["items"]} == {"j1", "j3"}
+    r2 = client.get("/api/v1/jobs?model_path=qwen")
+    assert {it["job_id"] for it in r2.json()["items"]} == {"j1", "j2"}
+
+
+def test_get_jobs_pagination(client):
+    from app import main as app_main
+    from app.models.enums import JobStatus
+    from app.utils.time import now_iso
+    store = app_main.state_store
+    mine = app_main.instance_state.instance_id
+    for i in range(5):
+        store.write_atomic(f"page_{i}", {
+            "job_id": f"page_{i}", "status": JobStatus.RUNNING.value,
+            "instance_id": mine, "datasets": [], "models": [],
+            "config_path": "/x", "work_dir": "/y", "created_at": now_iso(),
+            "started_at": now_iso(), "finished_at": None, "exit_code": None,
+            "error_message": None, "pid": None, "created_by": None,
+        })
+    r1 = client.get("/api/v1/jobs?limit=2&offset=0")
+    assert r1.json()["total"] == 5
+    assert len(r1.json()["items"]) == 2
+    r2 = client.get("/api/v1/jobs?limit=2&offset=2")
+    assert len(r2.json()["items"]) == 2
+    r3 = client.get("/api/v1/jobs?limit=2&offset=4")
+    assert len(r3.json()["items"]) == 1
