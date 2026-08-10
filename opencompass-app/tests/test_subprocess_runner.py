@@ -161,3 +161,50 @@ def test_wait_and_finalize_keeps_completed_path_for_normal_exit(tmp_path):
     final = store.read("job_d")
     assert final["status"] == "completed"
     assert final["error_message"] is None
+
+
+def test_cancel_then_finalize_writes_cancelled(tmp_path):
+    """集成：request_cancel 发信号 → wait_and_finalize 收尾 → CANCELLED。"""
+    store = JobStateStore(base_dir=str(tmp_path / "state" / "jobs"))
+    store.write_atomic("job_e", {"job_id": "job_e", "status": "cancelling"})
+
+    proc = MagicMock()
+    proc.returncode = None
+    proc.terminate = MagicMock()
+    proc.wait = AsyncMock(return_value=0)
+
+    instance = InstanceState(max_concurrent=4, instance_id="test-inst")
+    asyncio.run(instance.try_acquire("job_e"))
+
+    asyncio.run(request_cancel(proc, grace_seconds=1))
+    asyncio.run(wait_and_finalize("job_e", proc, store, instance))
+
+    final = store.read("job_e")
+    assert final["status"] == "cancelled"
+    assert final["error_message"] == "cancelled by user"
+    assert instance.running_count() == 0
+
+
+def test_finalize_after_kill_keeps_cancelled(tmp_path):
+    """集成：request_cancel 走到 SIGKILL → wait_and_finalize 仍写 CANCELLED。"""
+    store = JobStateStore(base_dir=str(tmp_path / "state" / "jobs"))
+    store.write_atomic("job_f", {"job_id": "job_f", "status": "cancelling"})
+
+    proc = MagicMock()
+    proc.returncode = None
+    proc.terminate = MagicMock()
+    proc.kill = MagicMock()
+    # wait_for 阶段抛 TimeoutError → SIGKILL；kill 后 best-effort wait 忽略异常
+    proc.wait = AsyncMock(side_effect=asyncio.TimeoutError())
+
+    instance = InstanceState(max_concurrent=4, instance_id="test-inst")
+    asyncio.run(instance.try_acquire("job_f"))
+
+    asyncio.run(request_cancel(proc, grace_seconds=0))
+    # 模拟进程在 SIGKILL 后以 exit code 137 退出
+    proc.wait = AsyncMock(return_value=137)
+    asyncio.run(wait_and_finalize("job_f", proc, store, instance))
+
+    final = store.read("job_f")
+    assert final["status"] == "cancelled"
+    assert final["exit_code"] == 137
