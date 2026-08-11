@@ -1,0 +1,48 @@
+# opencompass-app docker-compose — 开发/单机部署
+#
+# 用法（必须在仓库根跑，因为 build context 是 .）：
+#     docker compose -f opencompass-app/docker-compose.yml up -d --build
+#     docker compose -f opencompass-app/docker-compose.yml down
+#     docker compose -f opencompass-app/docker-compose.yml logs -f
+#
+# 关键配置：
+# - build context 是仓库根 "."，配合 .dockerignore 排除不必要文件
+# - OC_DATA_ROOT=/data/opencompass 必须挂载 /data/opencompass（包含 datasets/ + workspace 子目录）
+# - INSTANCE_ID 默认空，容器内由 app.core.instance 派生（容器 hostname）
+
+services:
+  opencompass-app:
+    build:
+      context: ..
+      dockerfile: opencompass-app/Dockerfile
+    image: opencompass-app:develop
+    container_name: opencompass-app
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # === 必须 ===
+      OC_DATA_ROOT: /data/opencompass
+      # === 可调 ===
+      MAX_CONCURRENT: "4"
+      LOG_LEVEL: INFO
+      PORT: "8080"
+      INSTANCE_ID: ""   # 空 → 由 app.core.instance 从 hostname 派生
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      # 整个 OC 数据根（datasets/ + workspace 子目录）
+      - /data/opencompass:/data/opencompass
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health -o /dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      start_period: 15s   # 给 recover_after_restart 留时间
+      retries: 3
+    # 容器内允许的最大进程数（subprocess_runner 启动 OC 子进程）
+    # pids_limit: 256
+    # 日志：默认 json-file driver，限 10MB × 3 文件
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
