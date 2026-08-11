@@ -38,6 +38,12 @@ async def lifespan(app: FastAPI):
         max_concurrent=s.max_concurrent,
         instance_id=s.instance_id,
     )
+
+    # Phase 3：启动时 recover 残留任务
+    from app.utils.recovery import recover_after_restart
+    await recover_after_restart(state_store, instance_state)
+    instance_state.mark_ready()
+
     yield
 
 
