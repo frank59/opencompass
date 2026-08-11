@@ -50,15 +50,18 @@ class InstanceState:
         """保存进程对象引用（不参与锁保护，调用方负责时序）。"""
         self._processes[job_id] = proc
 
+    # ----- lifecycle / recovery helpers (Phase 3) -----
     def mark_ready(self) -> None:
         """设置 ready=True（幂等）。由 lifespan recover 完成后调用。"""
         self.ready = True
 
     def reserve_for_recovery(self, job_id: str) -> None:
-        """recover 时占位对齐计数（同步，单线程上下文安全）。
+        """recover 时占位（同步，单线程上下文安全）。
 
-        不参与并发限流判断路径；用于在 lifespan startup 单线程上下文中
-        把残留任务的 slot 计数清零。
+        行为：将 job_id 加入 _running（不持锁，不参与并发限流判断路径）。
+
+        约束：仅可在 lifespan startup 单线程上下文中调用；调用方需紧接
+        release(job_id) 完成 slot 计数清零。
         """
         self._running.add(job_id)
 
