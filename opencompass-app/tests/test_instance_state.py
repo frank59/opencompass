@@ -70,3 +70,25 @@ def test_concurrent_acquire_respects_limit(inst):
 
 def test_instance_id_exposed(inst):
     assert inst.instance_id == "test-inst"
+
+
+def test_ready_default_false(inst):
+    assert inst.ready is False
+
+
+def test_mark_ready_sets_true(inst):
+    inst.mark_ready()
+    assert inst.ready is True
+
+
+def test_mark_ready_idempotent(inst):
+    inst.mark_ready()
+    inst.mark_ready()
+    assert inst.ready is True
+
+
+def test_reserve_for_recovery_aligns_running_count(inst):
+    inst.reserve_for_recovery("job_a")
+    assert inst.running_count() == 1
+    asyncio.run(inst.release("job_a"))
+    assert inst.running_count() == 0
