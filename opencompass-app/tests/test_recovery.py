@@ -1,8 +1,6 @@
 """单元测试 app.utils.recovery。"""
 import os
 
-import pytest
-
 from app.utils.recovery import is_pid_in_current_session
 
 
