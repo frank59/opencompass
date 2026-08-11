@@ -37,3 +37,17 @@ def test_health_degraded_when_nfs_state_fails(client, monkeypatch):
     body = res.json()
     assert body["status"] == "degraded"
     assert body["checks"]["nfs_state"].startswith("fail")
+
+
+def test_health_503_when_not_ready(client):
+    from app import main as app_main
+    app_main.instance_state.ready = False
+    res = client.get("/health")
+    assert res.status_code == 503
+
+
+def test_health_200_after_ready(client):
+    from app import main as app_main
+    app_main.instance_state.ready = True
+    res = client.get("/health")
+    assert res.status_code == 200

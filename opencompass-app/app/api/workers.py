@@ -1,7 +1,7 @@
 """Worker 池查询 / 健康检查。"""
 import shutil
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.models.response import FreeWorkerCount, HealthCheck
 
@@ -25,7 +25,11 @@ async def free_workers() -> FreeWorkerCount:
 @health_router.get("/health", response_model=HealthCheck)
 async def health() -> HealthCheck:
     # 延迟导入：避免与 app.main 的循环导入
-    from app.main import get_state_store
+    from app.main import get_instance_state, get_state_store
+
+    inst = get_instance_state()
+    if not inst.ready:
+        raise HTTPException(503, "Instance recovering after restart")
 
     checks: dict[str, str] = {}
     try:
