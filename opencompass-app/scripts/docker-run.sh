@@ -79,17 +79,24 @@ docker run -d \
     "$IMAGE_NAME"
 
 # === 等待 /health 就绪（最长 30s）===
-# 用 127.0.0.1 而不是 localhost — localhost 在很多 Linux 上优先解析到
-# IPv6 ::1，但 uvicorn 监听 0.0.0.0 (IPv4 only)，IPv6 连接会超时失败。
-log "等待服务就绪（http://127.0.0.1:$PORT/health）..."
+# 在容器内 curl 而不是宿主机关口 — 有些 Linux 上 docker iptables DOCKER 链的
+# ! -i docker0 规则对 lo 接口不生效，导致 host curl 127.0.0.1:8080 超时，但服务
+# 本身运行正常（外部访问 192.168.10.x:8080 能成功）。docker exec 绕开 iptables
+# 直接走容器网络 namespace，一定能命中容器内 uvicorn。
+log "等待服务就绪（容器内 http://127.0.0.1:8080/health）..."
 local_ok=""
 for i in $(seq 1 60); do
     sleep 0.5
-    code=$(curl -s -4 -o /tmp/health.json -w '%{http_code}' "http://127.0.0.1:$PORT/health" 2>/dev/null || echo "000")
+    code=$(docker exec "$CONTAINER_NAME" \
+        curl -s -o /tmp/docker-run-health.json -w '%{http_code}' \
+        http://127.0.0.1:8080/health 2>/dev/null || echo "000")
     if [[ "$code" == "200" ]]; then
         local_ok="yes"
         ok "服务就绪（${i} × 0.5s）"
-        cat /tmp/health.json | python3 -m json.tool 2>/dev/null || cat /tmp/health.json
+        # 取出 health JSON（从容器内拷贝出来展示）
+        docker exec "$CONTAINER_NAME" cat /tmp/docker-run-health.json \
+            | python3 -m json.tool 2>/dev/null \
+            || docker exec "$CONTAINER_NAME" cat /tmp/docker-run-health.json
         echo ""
         break
     fi

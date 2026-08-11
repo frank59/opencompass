@@ -21,9 +21,30 @@ GRN=$'\033[0;32m'
 YLW=$'\033[1;33m'
 NC=$'\033[0m'
 
-# 用 127.0.0.1 而不是 localhost — uvicorn 监听 0.0.0.0 (IPv4 only)，
-# 宿主机 localhost 在很多 Linux 上优先解析 IPv6 ::1，会连不上。
-BASE="http://127.0.0.1:${PORT:-8080}"
+# 自动检测可达的 BASE URL：
+# - HOST_IP 环境变量优先（明确指定宿主机外部 IP）
+# - 否则尝试宿主机外部 IPv4（ip route 源 IP，避开 docker bridge 172.17.x.x）
+# - 最后回退到 localhost（如果宿主机 iptables 正常转 loopback）
+# 注：有些 Linux 上 docker iptables DOCKER 链对 lo 接口不生效，所以不能直接
+# 用 127.0.0.1。从宿主机的物理网卡 IP 访问，docker 端口转发一定生效。
+detect_base() {
+    local port="${PORT:-8080}"
+    if [[ -n "${HOST_IP:-}" ]]; then
+        echo "http://${HOST_IP}:${port}"
+        return
+    fi
+    # ip route get 默认路由的源 IP（通常是物理网卡，不是 docker bridge）
+    local ip
+    ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1)
+    if [[ -n "$ip" && "$ip" != "127.0.0.1" ]]; then
+        echo "http://${ip}:${port}"
+        return
+    fi
+    # 最后回退 localhost
+    echo "http://127.0.0.1:${port}"
+}
+BASE=$(detect_base)
+log "测试 BASE: $BASE"
 PASS=0
 FAIL=0
 
