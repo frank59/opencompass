@@ -98,6 +98,13 @@ else
 fi
 
 # === T2: POST /jobs (创建任务) ===
+# 注意：model.type 必须是 ModelWhitelist 接受的格式 "opencompass.models.<ClassName>"
+# （看 app/core/model_whitelist.py 的 found.add(f"opencompass.models.{obj.__name__}")）。
+# Phase 2 测试用 mock whitelist 能用 "opencompass.models.openai_api.OpenAISDK" 带子模块路径，
+# 但运行时真实 whitelist 不含子模块，所以必须用短名路径。
+#
+# 这个测试验证 API 端点契约（201/202 返回 job_id），不验证 OC 子进程能跑通任务。
+# 容器内没 GPU / API key，子进程跑模型调用会失败，但不影响 T2 通过。
 log "=== T2: POST /api/v1/jobs (201) ==="
 JOB_ID="docker_test_$(date +%s)_$$"
 read -r -d '' BODY <<JSON || true
@@ -105,7 +112,7 @@ read -r -d '' BODY <<JSON || true
   "job_id": "${JOB_ID}",
   "datasets": [{"abbr": "gsm8k"}],
   "models": [{
-    "type": "opencompass.models.openai_api.OpenAISDK",
+    "type": "opencompass.models.OpenAISDK",
     "path": "qwen",
     "key": "EMPTY",
     "openai_api_base": "https://example.invalid/v1"
