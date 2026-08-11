@@ -89,9 +89,35 @@ except Exception:
 }
 
 # ---------- 启动 / 清理 ----------
+setup_fake_opencompass() {
+    # Smoke 专用：假的 opencompass 替身。
+    # - 默认任务立即 exit 1（模拟原行为：opencompass 命令不存在 → 子进程失败 → job → FAILED），
+    #   让 t05b/t06 在子进程退出后立刻看到终态，避免 timing 抖动。
+    # - smoke_cap_* 任务 sleep 10s 保持 slot，给 T16 触发 running-count 409 用。
+    # - 用 sh 而非 python：shell 启动 ~5ms 比 python ~100ms 快一个量级。
+    # 放在 OC_DATA_ROOT 下，随 KEEP=0 一起清理，不污染全局 PATH。
+    local fake_dir="${OC_DATA_ROOT}/.fake-bin"
+    mkdir -p "$fake_dir"
+    cat > "${fake_dir}/opencompass" <<'SHEOF'
+#!/bin/sh
+# Smoke fake: smoke_cap_* sleeps 10s (holds slot), others exit 1 immediately.
+case "$1" in
+    *smoke_cap*) sleep 10; exit 0 ;;
+    *) exit 1 ;;
+esac
+SHEOF
+    chmod +x "${fake_dir}/opencompass"
+    > /tmp/smoke-fake-global.log  # 清空全局日志
+    echo "$fake_dir"
+}
+
 start_service() {
     log "启动服务: ${BASE} (OC_DATA_ROOT=${OC_DATA_ROOT})"
+    local fake_dir
+    fake_dir="$(setup_fake_opencompass)"
+    log "fake_dir=${fake_dir} (which opencompass: $(PATH="${fake_dir}:${PATH}" command -v opencompass))"
     cd "$APP_DIR"
+    PATH="${fake_dir}:${PATH}" \
     OC_DATA_ROOT="$OC_DATA_ROOT" \
     INSTANCE_ID="$INSTANCE_ID" \
     PORT="$PORT" \
@@ -207,15 +233,25 @@ t05a_list_owned() {
 
 t05b_list_filter_status() {
     section "T05b: GET /api/v1/jobs?status=running"
-    local code body total
+    # 等 T03 任务到达终态（fake 子进程 ~5ms 内 exit；asyncio 调度 + write_atomic 可能
+    # 多花几十毫秒）。轮询 GET /jobs/{id}，status 不是 running/starting 即视为终态。
+    local code body total status_now="" i
+    for i in $(seq 1 30); do
+        body=$(curl -s "${BASE}/api/v1/jobs/${JOB_ID}")
+        status_now=$(jq_field '["status"]' "$body" 2>/dev/null || echo "")
+        if [[ "$status_now" != "running" && "$status_now" != "starting" && -n "$status_now" ]]; then
+            break
+        fi
+        sleep 0.05
+    done
     code=$(curl -s -o /tmp/r.json -w "%{http_code}" "${BASE}/api/v1/jobs?status=running")
     body=$(cat /tmp/r.json)
     total=$(jq_field '["total"]' "$body" 2>/dev/null || echo "?")
-    # 不在本机完成 OC 评测 → 任务最终落到 failed；status=running 应=0
+    # T03 任务应已到达终态，status=running 过滤应=0
     if [[ "$code" == "200" && "$total" == "0" ]]; then
-        ok "T05b status=running → total=0"
+        ok "T05b status=running → total=0 (job 已到终态 status=$status_now)"
     else
-        fail "T05b status filter (code=$code total=$total)"
+        fail "T05b status filter (code=$code total=$total job_status=$status_now)"
     fi
 }
 
@@ -269,13 +305,22 @@ else:
 
 t06_stop_terminal_409() {
     section "T06: POST /stop on terminal job → 409"
-    local code body
+    # 等 T03 任务到达终态（与 T05b 同样的 race 问题）。
+    local status_now="" i code body
+    for i in $(seq 1 30); do
+        body=$(curl -s "${BASE}/api/v1/jobs/${JOB_ID}")
+        status_now=$(jq_field '["status"]' "$body" 2>/dev/null || echo "")
+        if [[ "$status_now" != "running" && "$status_now" != "starting" && -n "$status_now" ]]; then
+            break
+        fi
+        sleep 0.05
+    done
     code=$(curl -s -o /tmp/r.json -w "%{http_code}" -X POST "${BASE}/api/v1/jobs/${JOB_ID}/stop")
     body=$(cat /tmp/r.json)
     if [[ "$code" == "409" ]] && echo "$body" | grep -q "cannot stop"; then
-        ok "T06 stop terminal 409 + cannot stop"
+        ok "T06 stop terminal 409 + cannot stop (status=$status_now)"
     else
-        fail "T06 stop terminal (code=$code)"
+        fail "T06 stop terminal (code=$code job_status=$status_now)"
     fi
 }
 
@@ -367,6 +412,88 @@ t13_log_no_panic() {
     fi
 }
 
+t14_patch_capacity_success() {
+    section "T14: PATCH /api/v1/workers/me/capacity 200"
+    local code body new_max
+    code=$(curl -s -o /tmp/r.json -w "%{http_code}" -X PATCH "${BASE}/api/v1/workers/me/capacity" \
+        -H "Content-Type: application/json" -d '{"max_concurrent": 8}')
+    body=$(cat /tmp/r.json)
+    new_max=$(jq_field '["max_concurrent"]' "$body" 2>/dev/null || echo "")
+    if [[ "$code" == "200" && "$new_max" == "8" ]]; then
+        ok "T14 PATCH capacity 200 + max=8"
+    else
+        fail "T14 PATCH capacity (code=$code max=$new_max body=$body)"
+    fi
+    # 校验 /workers/me/free 立即反映新值（先抓 body 再用 jq_field，避免 stdin 传不到 $2）
+    local free_body free_max
+    free_body=$(curl -s "${BASE}/api/v1/workers/me/free")
+    free_max=$(jq_field '["max"]' "$free_body" 2>/dev/null || echo "")
+    if [[ "$free_max" == "8" ]]; then
+        ok "T14b /workers/me/free 立即反映新 max=8"
+    else
+        fail "T14b /workers/me/free max=$free_max (期望 8)"
+    fi
+}
+
+t15_patch_capacity_zero_422() {
+    section "T15: PATCH /me/capacity max=0 → 422"
+    local code
+    code=$(curl -s -o /tmp/r.json -w "%{http_code}" -X PATCH "${BASE}/api/v1/workers/me/capacity" \
+        -H "Content-Type: application/json" -d '{"max_concurrent": 0}')
+    check_status "$code" "422" "T15 PATCH capacity 0 → 422"
+}
+
+t16_patch_capacity_below_running_409() {
+    section "T16: PATCH /me/capacity < running → 409"
+    # Pydantic gt=0 在 max=0 时返 422；这里要用 >0 但 < running_count 才会走业务 409。
+    # 先把上限提到 8（容纳 2 个任务），再并发 POST 2 个任务占住 slot。
+    curl -s -o /dev/null -X PATCH "${BASE}/api/v1/workers/me/capacity" \
+        -H "Content-Type: application/json" -d '{"max_concurrent": 8}'
+    local job_a="smoke_cap_a_$$"
+    local job_b="smoke_cap_b_$$"
+    curl -s -o /dev/null -X POST "${BASE}/api/v1/jobs" -H "Content-Type: application/json" \
+        -d "{\"job_id\":\"${job_a}\",\"datasets\":[{\"abbr\":\"gsm8k\"}],\"models\":[{\"type\":\"opencompass.models.openai_api.OpenAISDK\",\"path\":\"q\"}]}"
+    curl -s -o /dev/null -X POST "${BASE}/api/v1/jobs" -H "Content-Type: application/json" \
+        -d "{\"job_id\":\"${job_b}\",\"datasets\":[{\"abbr\":\"gsm8k\"}],\"models\":[{\"type\":\"opencompass.models.openai_api.OpenAISDK\",\"path\":\"q\"}]}"
+    # 轮询 running >= 2（子进程退出后会 release slot，窗口可能很短）
+    local i running="" free_body
+    for i in $(seq 1 20); do
+        free_body=$(curl -s "${BASE}/api/v1/workers/me/free")
+        running=$(jq_field '["running"]' "$free_body" 2>/dev/null || echo "")
+        if [[ "$running" -ge 2 ]]; then break; fi
+        sleep 0.05
+    done
+    if [[ "$running" -lt 2 ]]; then
+        fail "T16 准备失败: running=$running (期望 >=2，可能子进程太快退出)"
+        return
+    fi
+    local code
+    code=$(curl -s -o /tmp/r.json -w "%{http_code}" -X PATCH "${BASE}/api/v1/workers/me/capacity" \
+        -H "Content-Type: application/json" -d '{"max_concurrent": 1}')
+    if [[ "$code" == "409" ]]; then
+        ok "T16 PATCH capacity 1 (running=$running) → 409"
+    else
+        fail "T16 PATCH capacity (code=$code body=$(cat /tmp/r.json))"
+    fi
+}
+
+t17_recovery_e2e() {
+    section "T17: 残留状态文件可被 GET 读取"
+    # 注入一个 starting 残留
+    local state_dir="${OC_DATA_ROOT}/workspace/state/jobs"
+    mkdir -p "$state_dir"
+    cat > "${state_dir}/smoke_residual.json" <<EOF
+{"job_id":"smoke_residual","status":"starting","instance_id":"${INSTANCE_ID}","pid":null,"datasets":[],"models":[],"config_path":"/x","work_dir":"/y","created_at":"2026-08-11T00:00:00Z"}
+EOF
+    local code
+    code=$(curl -s -o /tmp/r.json -w "%{http_code}" "${BASE}/api/v1/jobs/smoke_residual")
+    if [[ "$code" == "200" ]]; then
+        ok "T17 残留状态文件可被 GET（recover 验证留给集成测试）"
+    else
+        fail "T17 残留 GET (code=$code)"
+    fi
+}
+
 # ---------- 主流程 ----------
 run_tests() {
     local t
@@ -375,7 +502,8 @@ run_tests() {
              t05d_list_pagination t06_stop_terminal_409 t07_delete_terminal_204 \
              t08a_get_missing_404 t08b_stop_missing_404 t09_duplicate_job_409 \
              t10_unknown_model_422 t11_cross_instance_403 t12_health_final \
-             t13_log_no_panic; do
+             t13_log_no_panic t14_patch_capacity_success t15_patch_capacity_zero_422 \
+             t16_patch_capacity_below_running_409 t17_recovery_e2e; do
         if should_run "$t"; then
             "$t"
         fi
