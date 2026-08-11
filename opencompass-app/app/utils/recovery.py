@@ -57,24 +57,24 @@ async def recover_after_restart(
             continue
 
         if status == JobStatus.STARTING.value:
-            _mark_failed(store, instance, job_id, state,
-                         "Instance crashed before subprocess started")
+            await _mark_failed(store, instance, job_id, state,
+                               "Instance crashed before subprocess started")
         elif status in (JobStatus.RUNNING.value, JobStatus.CANCELLING.value):
             pid = state.get("pid")
             if not is_pid_in_current_session(pid):
-                _mark_failed(store, instance, job_id, state,
-                             f"Instance crashed; PID {pid} not in current session")
+                await _mark_failed(store, instance, job_id, state,
+                                   f"Instance crashed; PID {pid} not in current session")
             else:
                 log.warning("Job %s PID %s still alive after restart; leaving for ops",
                             job_id, pid)
         elif status == JobStatus.FINALIZING.value:
-            _mark_failed(store, instance, job_id, state,
-                         "Instance crashed during finalization")
+            await _mark_failed(store, instance, job_id, state,
+                               "Instance crashed during finalization")
         else:
             log.warning("Unknown status %s for job %s; skipping", status, job_id)
 
 
-def _mark_failed(store, instance, job_id, current, error_message):
+async def _mark_failed(store, instance, job_id, current, error_message):
     """标记任务为 failed 并对齐 slot 计数。"""
     new_state = {
         **current,
@@ -89,5 +89,5 @@ def _mark_failed(store, instance, job_id, current, error_message):
         return  # 单文件失败不阻断
 
     instance.reserve_for_recovery(job_id)
-    instance.release(job_id)
+    await instance.release(job_id)
     log.info("Recovered job %s: %s", job_id, error_message)
