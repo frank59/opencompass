@@ -21,6 +21,10 @@ GRN=$'\033[0;32m'
 YLW=$'\033[1;33m'
 NC=$'\033[0m'
 
+log() { echo "${YLW}[docker-test]${NC} $*"; }
+ok() { PASS=$((PASS+1)); echo "  ${GRN}PASS${NC}  $*"; }
+fail() { FAIL=$((FAIL+1)); echo "  ${RED}FAIL${NC}  $*"; }
+
 # 自动检测可达的 BASE URL：
 # - HOST_IP 环境变量优先（明确指定宿主机外部 IP）
 # - 否则尝试宿主机外部 IPv4（ip route 源 IP，避开 docker bridge 172.17.x.x）
@@ -47,10 +51,6 @@ BASE=$(detect_base)
 log "测试 BASE: $BASE"
 PASS=0
 FAIL=0
-
-log() { echo "${YLW}[docker-test]${NC} $*"; }
-ok() { PASS=$((PASS+1)); echo "  ${GRN}PASS${NC}  $*"; }
-fail() { FAIL=$((FAIL+1)); echo "  ${RED}FAIL${NC}  $*"; }
 
 # jq 可选，没有就用 python
 jq_field() {
