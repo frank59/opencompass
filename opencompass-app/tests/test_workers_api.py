@@ -51,3 +51,60 @@ def test_health_200_after_ready(client):
     app_main.instance_state.ready = True
     res = client.get("/health")
     assert res.status_code == 200
+
+
+def test_patch_capacity_success_updates_state(client):
+    res = client.patch(
+        "/api/v1/workers/me/capacity",
+        json={"max_concurrent": 16},
+    )
+    assert res.status_code == 200
+    assert res.json() == {"max_concurrent": 16}
+    from app import main as app_main
+    assert app_main.instance_state.max_concurrent == 16
+
+
+def test_patch_capacity_below_running_returns_409(client):
+    from app import main as app_main
+    asyncio.run(app_main.instance_state.try_acquire("job_a"))
+    asyncio.run(app_main.instance_state.try_acquire("job_b"))
+    res = client.patch(
+        "/api/v1/workers/me/capacity",
+        json={"max_concurrent": 1},
+    )
+    assert res.status_code == 409
+    assert "less than current running" in res.json()["detail"]
+
+
+def test_patch_capacity_zero_returns_422(client):
+    res = client.patch(
+        "/api/v1/workers/me/capacity",
+        json={"max_concurrent": 0},
+    )
+    assert res.status_code == 422
+
+
+def test_patch_capacity_negative_returns_422(client):
+    res = client.patch(
+        "/api/v1/workers/me/capacity",
+        json={"max_concurrent": -1},
+    )
+    assert res.status_code == 422
+
+
+def test_patch_capacity_missing_field_returns_422(client):
+    res = client.patch(
+        "/api/v1/workers/me/capacity",
+        json={},
+    )
+    assert res.status_code == 422
+
+
+def test_patch_capacity_503_when_not_ready(client):
+    from app import main as app_main
+    app_main.instance_state.ready = False
+    res = client.patch(
+        "/api/v1/workers/me/capacity",
+        json={"max_concurrent": 8},
+    )
+    assert res.status_code == 503
