@@ -50,6 +50,24 @@ class InstanceState:
         """保存进程对象引用（不参与锁保护，调用方负责时序）。"""
         self._processes[job_id] = proc
 
+    async def try_set_max_concurrent(self, new_max: int) -> tuple[bool, int]:
+        """原子地设置 max_concurrent。
+
+        在 _lock 内同时读 running_count 和写 max_concurrent，保证与
+        try_acquire 的互斥，避免 read-modify-write 窗口期被并发 acquire 推高
+        running_count。
+
+        Returns:
+            (ok, current_running) — ok=True 表示设置成功，current_running 是
+            校验时的 running_count（供端点生成错误码）。
+        """
+        async with self._lock:
+            current = len(self._running)
+            if new_max < current:
+                return False, current
+            self.max_concurrent = new_max
+            return True, current
+
     # ----- lifecycle / recovery helpers (Phase 3) -----
     def mark_ready(self) -> None:
         """设置 ready=True（幂等）。由 lifespan recover 完成后调用。"""

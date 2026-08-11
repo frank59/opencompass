@@ -58,18 +58,20 @@ async def adjust_capacity(req: CapacityAdjustRequest) -> dict[str, int]:
       - max_concurrent >= running_count（业务校验 → 409）
 
     立即生效；不持久化（重启后从环境变量 MAX_CONCURRENT 读回）。
+    并发安全：通过 InstanceState.try_set_max_concurrent 在 _lock 内
+    原子地 read+running_count+write，避免与 try_acquire 的窗口期 race。
     """
     from app.main import get_instance_state
 
     inst = get_instance_state()
     if not inst.ready:
         raise HTTPException(503, "Instance recovering after restart")
-    if req.max_concurrent < inst.running_count():
+    ok, current_running = await inst.try_set_max_concurrent(req.max_concurrent)
+    if not ok:
         raise HTTPException(
             409,
             f"New max ({req.max_concurrent}) less than current running "
-            f"({inst.running_count()})",
+            f"({current_running})",
         )
-    inst.max_concurrent = req.max_concurrent
     log.info("Capacity adjusted to %d via PATCH /me/capacity", req.max_concurrent)
     return {"max_concurrent": inst.max_concurrent}

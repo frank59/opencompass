@@ -92,3 +92,31 @@ def test_reserve_for_recovery_aligns_running_count(inst):
     assert inst.running_count() == 1
     asyncio.run(inst.release("job_a"))
     assert inst.running_count() == 0
+
+
+def test_try_set_max_concurrent_succeeds_when_room(inst):
+    ok, running = asyncio.run(inst.try_set_max_concurrent(5))
+    assert ok is True
+    assert running == 0
+    assert inst.max_concurrent == 5
+
+
+def test_try_set_max_concurrent_fails_when_below_running(inst):
+    asyncio.run(inst.try_acquire("a"))
+    asyncio.run(inst.try_acquire("b"))
+    ok, running = asyncio.run(inst.try_set_max_concurrent(1))
+    assert ok is False
+    assert running == 2
+    assert inst.max_concurrent == 3  # 保持原值
+
+
+def test_try_set_max_concurrent_serializes_with_acquire(inst):
+    """读 running + 写 max 走同一把锁，与 try_acquire 互斥。"""
+    asyncio.run(inst.try_acquire("a"))
+    asyncio.run(inst.try_acquire("b"))
+    # 如果不持锁，下面 read running=2 之后可能 try_acquire 加 a' 进入 running=3
+    # 但 try_set_max_concurrent 在锁内做 read+write，输出 running 总是 2。
+    ok, running = asyncio.run(inst.try_set_max_concurrent(2))
+    assert ok is True
+    assert running == 2
+    assert inst.max_concurrent == 2
