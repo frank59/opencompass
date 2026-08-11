@@ -5,7 +5,7 @@ OpenCompass 评测任务的最小调度服务（FastAPI）。本服务**不**修
 
 ## 范围
 
-闭环覆盖 7 个端点（MVP 4 + Phase 2 3）：
+闭环覆盖 9 个端点（MVP 4 + Phase 2 3 + Phase 3 2）：
 
 | 端点 | 方法 | 说明 | 阶段 |
 |------|------|------|------|
@@ -15,9 +15,12 @@ OpenCompass 评测任务的最小调度服务（FastAPI）。本服务**不**修
 | `/api/v1/jobs/{job_id}/stop` | POST | 任务停止（CANCELLING+CANCELLED） | Phase 2 |
 | `/api/v1/jobs/{job_id}` | DELETE | 删除任务（仅限终态） | Phase 2 |
 | `/api/v1/workers/me/free` | GET | 当前实例空闲 worker 数 | MVP |
-| `/health` | GET | 健康检查 | MVP |
+| `/api/v1/workers/me/capacity` | PATCH | 动态调整并发上限（PRD FR-3.3） | Phase 3 |
+| `/health` | GET | 健康检查（recover 期间返 503） | MVP / Phase 3 |
 
-Phase 3+ 范围：`recover_after_restart`、`PATCH /workers/me/capacity`。
+额外能力：
+- **启动恢复** `recover_after_restart()`：lifespan startup 扫描残留状态，
+  残留 starting/running/cancelling/finalizing 任务标记为 failed（PRD FR-6）。
 
 ## 架构图
 
@@ -30,6 +33,7 @@ HTTP Client → FastAPI → opencompass subprocess
 完整设计：[`docs/opencompass-scheduler-design.md`](../../docs/opencompass-scheduler-design.md)
 MVP 设计：[`docs/superpowers/specs/2026-08-09-opencompass-app-mvp-design.md`](../../docs/superpowers/specs/2026-08-09-opencompass-app-mvp-design.md)
 Phase 2 设计：[`docs/superpowers/specs/2026-08-09-opencompass-app-phase2-design.md`](../../docs/superpowers/specs/2026-08-09-opencompass-app-phase2-design.md)
+Phase 3 设计：[`docs/superpowers/specs/2026-08-11-opencompass-app-phase3-design.md`](../../docs/superpowers/specs/2026-08-11-opencompass-app-phase3-design.md)
 
 ## 目录结构
 
@@ -57,6 +61,7 @@ app/
 │   └── dataset_index.yaml      # 复制自 ../../dataset-index.yml
 └── utils/
     ├── ids.py
+    ├── recovery.py              # recover_after_restart + is_pid (Phase 3)
     └── time.py
 ```
 
@@ -107,8 +112,39 @@ curl -X POST http://localhost:8080/api/v1/jobs \
   禁止硬编码类名字符串。
 - **原子状态写**：所有 NFS 任务状态文件通过 `tempfile + fsync + os.replace` 写入。
 
+## Phase 3：恢复 + 动态容量
+
+### `recover_after_restart()`（lifespan startup）
+
+实例启动时串行扫描 NFS 状态目录：
+
+| 残留状态 | 动作 |
+|----------|------|
+| `completed` / `failed` / `cancelled` | 跳过（已是终态） |
+| `starting` | 标记 failed（`Instance crashed before subprocess started`） |
+| `running` / `cancelling` | `os.kill(pid, 0)` 探测 PID；不存在则标记 failed；存活则留待运维介入 |
+| `finalizing` | 标记 failed（`Instance crashed during finalization`） |
+
+每个标记 failed 的任务都会 `reserve_for_recovery(job_id) + await release(job_id)`，
+保证 in-memory `_running` 计数不残留。recover 完成前 `/health` 返回 503。
+
+### `PATCH /api/v1/workers/me/capacity`（PRD FR-3.3）
+
+```bash
+curl -X PATCH http://localhost:8080/api/v1/workers/me/capacity \
+    -H 'content-type: application/json' \
+    -d '{"max_concurrent": 16}'
+```
+
+- Pydantic 校验：`max_concurrent > 0`，否则 422
+- 业务校验：低于当前 `running_count` 时返 409
+- 立即生效（修改 in-memory `instance_state.max_concurrent`）
+- 不持久化：实例重启后回到环境变量 `MAX_CONCURRENT`
+- recover 期间返 503
+
 ## 测试策略
 
-- 单元测试：utils、whitelists、registry、generator、subprocess_runner
+- 单元测试：utils、whitelists、registry、generator、subprocess_runner、recovery
 - API 集成测试：`FastAPI.TestClient` + `monkeypatch` 桩掉 `subprocess_runner.start`
 - 端到端：手动 `uvicorn` + `curl` 走通（见实施计划 `Phase 7.1`）
+- 手动冒烟：`bash scripts/smoke_manual.sh`（23 项端点验证）
