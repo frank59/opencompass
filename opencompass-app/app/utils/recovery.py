@@ -6,7 +6,6 @@
 """
 import logging
 import os
-from typing import Optional
 
 from app.core.state import InstanceState
 from app.models.enums import JobStatus
@@ -16,7 +15,7 @@ from app.utils.time import now_iso
 log = logging.getLogger(__name__)
 
 
-def is_pid_in_current_session(pid: Optional[int]) -> bool:
+def is_pid_in_current_session(pid: int | None) -> bool:
     """检查 PID 是否属于当前进程会话。
 
     实现：os.kill(pid, 0) — 仅检查进程是否存在。lifespan startup 串行执行
