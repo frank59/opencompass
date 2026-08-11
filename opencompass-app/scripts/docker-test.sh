@@ -21,7 +21,9 @@ GRN=$'\033[0;32m'
 YLW=$'\033[1;33m'
 NC=$'\033[0m'
 
-BASE="http://localhost:${PORT:-8080}"
+# 用 127.0.0.1 而不是 localhost — uvicorn 监听 0.0.0.0 (IPv4 only)，
+# 宿主机 localhost 在很多 Linux 上优先解析 IPv6 ::1，会连不上。
+BASE="http://127.0.0.1:${PORT:-8080}"
 PASS=0
 FAIL=0
 

@@ -79,11 +79,13 @@ docker run -d \
     "$IMAGE_NAME"
 
 # === 等待 /health 就绪（最长 30s）===
-log "等待服务就绪（http://localhost:$PORT/health）..."
+# 用 127.0.0.1 而不是 localhost — localhost 在很多 Linux 上优先解析到
+# IPv6 ::1，但 uvicorn 监听 0.0.0.0 (IPv4 only)，IPv6 连接会超时失败。
+log "等待服务就绪（http://127.0.0.1:$PORT/health）..."
 local_ok=""
 for i in $(seq 1 60); do
     sleep 0.5
-    code=$(curl -s -o /tmp/health.json -w '%{http_code}' "http://localhost:$PORT/health" 2>/dev/null || echo "000")
+    code=$(curl -s -4 -o /tmp/health.json -w '%{http_code}' "http://127.0.0.1:$PORT/health" 2>/dev/null || echo "000")
     if [[ "$code" == "200" ]]; then
         local_ok="yes"
         ok "服务就绪（${i} × 0.5s）"
