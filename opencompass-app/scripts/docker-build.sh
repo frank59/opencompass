@@ -33,9 +33,10 @@ log "脚本目录:  $SCRIPT_DIR"
 log "APP 目录:  $APP_DIR"
 log "仓库根:    $REPO_ROOT"
 
-[[ -f "$REPO_ROOT/opencompass/setup.py" ]] || die "找不到 $REPO_ROOT/opencompass/setup.py"
+[[ -f "$REPO_ROOT/setup.py" ]] || die "找不到 $REPO_ROOT/setup.py"
 [[ -f "$APP_DIR/Dockerfile" ]] || die "找不到 $APP_DIR/Dockerfile"
 [[ -f "$REPO_ROOT/requirements/runtime.txt" ]] || die "找不到 $REPO_ROOT/requirements/runtime.txt"
+[[ -d "$REPO_ROOT/opencompass" ]] || die "找不到 $REPO_ROOT/opencompass/ 子包目录"
 
 # === docker 检查 ===
 command -v docker >/dev/null || die "docker 未安装"

@@ -39,10 +39,12 @@ data/
 *.tar.gz
 *.parquet
 
-# 文档（运行时不需要）
+# 文档（运行时不需要）— 但 README.md 是 setup.py 的 long_description 来源，必须保留
 docs/
 README*.md
 *.md
+!README.md
+!opencompass-app/README.md
 
 # Docker 自身
 Dockerfile
