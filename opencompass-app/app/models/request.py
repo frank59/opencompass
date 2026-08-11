@@ -30,3 +30,12 @@ class CreateJobRequest(BaseModel):
     priority: int = 5
     max_runtime_seconds: int = 7200
     created_by: str | None = None
+
+
+class CapacityAdjustRequest(BaseModel):
+    """PATCH /api/v1/workers/me/capacity 请求体。
+
+    PRD FR-3.3 / 7.2：调整并发上限。Pydantic 自动校验 gt=0。
+    业务校验（< running_count → 409）在端点处处理。
+    """
+    max_concurrent: int = Field(gt=0, description="New max concurrent jobs; must be > 0")
