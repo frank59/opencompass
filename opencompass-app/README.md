@@ -5,7 +5,7 @@ OpenCompass 评测任务的最小调度服务（FastAPI）。本服务**不**修
 
 ## 范围
 
-闭环覆盖 9 个端点（MVP 4 + Phase 2 3 + Phase 3 2）：
+闭环覆盖 10 个端点（MVP 4 + Phase 2 3 + Phase 3 2 + Phase 4 1）：
 
 | 端点 | 方法 | 说明 | 阶段 |
 |------|------|------|------|
@@ -14,6 +14,7 @@ OpenCompass 评测任务的最小调度服务（FastAPI）。本服务**不**修
 | `/api/v1/jobs` | GET | 列表 + 过滤 + 分页 | Phase 2 |
 | `/api/v1/jobs/{job_id}/stop` | POST | 任务停止（CANCELLING+CANCELLED） | Phase 2 |
 | `/api/v1/jobs/{job_id}` | DELETE | 删除任务（仅限终态） | Phase 2 |
+| `/api/v1/jobs/{job_id}/log` | GET | 任务执行日志分页读取 | Phase 4 |
 | `/api/v1/workers/me/free` | GET | 当前实例空闲 worker 数 | MVP |
 | `/api/v1/workers/me/capacity` | PATCH | 动态调整并发上限（PRD FR-3.3） | Phase 3 |
 | `/health` | GET | 健康检查（recover 期间返 503） | MVP / Phase 3 |
@@ -142,9 +143,54 @@ curl -X PATCH http://localhost:8080/api/v1/workers/me/capacity \
 - 不持久化：实例重启后回到环境变量 `MAX_CONCURRENT`
 - recover 期间返 503
 
+## Phase 4：任务执行日志
+
+**动机**：原 MVP 把 OC 子进程 stdout 重定向到 PIPE 但没人读取，进程退出后日志丢失，调试只能看 exit_code + 一行 error_message。
+
+**改动**：
+- `subprocess_runner.start()` 接受 `log_path` 参数，打开 unbuffered 文件把 stdout/stderr（合并）写入
+- 日志路径：`{oc_data_root}/workspace/_in_progress/{job_id}/run_001/logs/opencompass.log`
+- `proc._log_fp` 保留 fp 引用至 wait_and_finalize（防 GC 关 fd 触发子进程 SIGPIPE）
+- 新端点 `GET /api/v1/jobs/{job_id}/log?start_line=&limit=&tail=` 按行分页读取
+- `JobResponse` 增加 `log_path` 字段
+
+**日志端点用法**：
+
+```bash
+# 第 1 页（从第 0 行读 100 行）
+curl 'http://host/api/v1/jobs/job_xxx/log?start_line=0&limit=100'
+
+# 下一页（从第 100 行读 100 行）
+curl 'http://host/api/v1/jobs/job_xxx/log?start_line=100&limit=100'
+
+# 最后 N 行（tail 模式，忽略 start_line）
+curl 'http://host/api/v1/jobs/job_xxx/log?tail=true&limit=200'
+
+# 响应
+# {
+#   "job_id": "...",
+#   "log_path": "/data/opencompass/workspace/_in_progress/.../opencompass.log",
+#   "total_lines": 1234,
+#   "start_line": 100,
+#   "limit": 100,
+#   "returned_lines": 100,
+#   "eof": false,
+#   "lines": ["...", "...", ...]
+# }
+```
+
+**约束**：
+- `limit` 上限 1000（防 DoS）
+- `start_line >= 0`（FastAPI Query 校验）
+- 文件不存在 → 200 + 空 lines（任务刚创建未启动）
+- job 不存在 → 404
+- 访问权限与 `GET /jobs/{id}` 一致（任意实例可读）
+- 单任务日志 > 100MB 时考虑改为 `seek+read` 增量读
+
 ## 测试策略
 
-- 单元测试：utils、whitelists、registry、generator、subprocess_runner、recovery
+- 单元测试：utils、whitelists、registry、generator、subprocess_runner、recovery、log_helper
 - API 集成测试：`FastAPI.TestClient` + `monkeypatch` 桩掉 `subprocess_runner.start`
 - 端到端：手动 `uvicorn` + `curl` 走通（见实施计划 `Phase 7.1`）
-- 手动冒烟：`bash scripts/smoke_manual.sh`（23 项端点验证）
+- 手动冒烟：`bash scripts/smoke_manual.sh`（18 项端点验证）
+- 容器黑盒：`bash opencompass-app/scripts/docker-test.sh`（10 项端点验证）

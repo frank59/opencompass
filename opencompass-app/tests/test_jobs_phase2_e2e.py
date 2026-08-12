@@ -38,7 +38,7 @@ def e2e_client(tmp_path, monkeypatch):
 
     import app.executor.subprocess_runner as sr
 
-    async def fake_start(job_id, config_path):
+    async def fake_start(job_id, config_path, log_path=None):
         proc = MagicMock()
         proc.pid = 99999
 

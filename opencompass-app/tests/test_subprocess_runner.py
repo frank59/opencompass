@@ -40,6 +40,120 @@ def test_start_constructs_correct_command(monkeypatch, tmp_path):
     assert cmd[4] == "-r"
     assert cmd[5] == "run_001"
     assert proc.pid == 12345
+    # 默认行为（log_path=None）：stdout=PIPE，stderr=STDOUT
+    assert captured["kwargs"]["stdout"] == asyncio.subprocess.PIPE
+    assert captured["kwargs"]["stderr"] == asyncio.subprocess.STDOUT
+
+
+def test_start_with_log_path_opens_unbuffered_and_keeps_handle(monkeypatch, tmp_path):
+    """Phase 4: log_path 给出时 stdout 写入文件，保留 fp 引用防 SIGPIPE。"""
+    captured = {}
+
+    class FakeProc:
+        pid = 54321
+
+    async def fake_exec(*cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return FakeProc()
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_exec)
+
+    config_path = (
+        tmp_path
+        / "workspace"
+        / "_in_progress"
+        / "job_x"
+        / "run_001"
+        / "configs"
+        / "job_x.py"
+    )
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("# empty\n", encoding="utf-8")
+
+    log_path = (
+        tmp_path
+        / "workspace"
+        / "_in_progress"
+        / "job_x"
+        / "run_001"
+        / "logs"
+        / "opencompass.log"
+    )
+    assert not log_path.exists()  # start() 应创建父目录
+
+    proc = asyncio.run(start("job_x", str(config_path), log_path))
+
+    # 验证 stdout 是打开的文件（不是 PIPE）
+    stdout = captured["kwargs"]["stdout"]
+    assert hasattr(stdout, "write"), "stdout should be an open file, not PIPE"
+    assert stdout.mode == "wb"
+    # buffering=0 让子进程 write() 立即落盘 — 返回类型是 _io.FileIO（无 buffer 层）
+    assert type(stdout).__name__ == "FileIO", f"expected FileIO, got {type(stdout).__name__}"
+    assert captured["kwargs"]["stderr"] == asyncio.subprocess.STDOUT
+
+    # 关键：fp 引用挂在 proc._log_fp，否则 Python GC 会关 fd
+    assert hasattr(proc, "_log_fp")
+    assert proc._log_fp is stdout
+
+    # log_path 父目录应已被创建
+    assert log_path.parent.exists()
+    stdout.close()
+
+
+def test_start_without_log_path_uses_pipe(monkeypatch, tmp_path):
+    """不传 log_path 时保持旧 PIPE 行为（兼容旧单测）。"""
+    captured = {}
+
+    class FakeProc:
+        pid = 9999
+
+    async def fake_exec(*cmd, **kwargs):
+        captured["kwargs"] = kwargs
+        return FakeProc()
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_exec)
+
+    config_path = tmp_path / "job.py"
+    config_path.write_text("# x\n", encoding="utf-8")
+
+    asyncio.run(start("j", str(config_path)))
+    assert captured["kwargs"]["stdout"] == asyncio.subprocess.PIPE
+
+
+def test_wait_and_finalize_closes_log_fp(tmp_path):
+    """Phase 4: wait_and_finalize 后关闭挂在 proc 上的 _log_fp。"""
+    store = JobStateStore(base_dir=str(tmp_path / "state" / "jobs"))
+    store.write_atomic("job_log", {"job_id": "job_log", "status": "running"})
+
+    log_fp = open(tmp_path / "log.txt", "wb", buffering=0)
+    proc = MagicMock()
+    proc.pid = 1
+    proc.wait = AsyncMock(return_value=0)
+    proc._log_fp = log_fp
+
+    instance = InstanceState(max_concurrent=4, instance_id="i")
+    asyncio.run(instance.try_acquire("job_log"))
+    asyncio.run(wait_and_finalize("job_log", proc, store, instance))
+
+    assert log_fp.closed, "log_fp should be closed after wait_and_finalize"
+    assert not hasattr(proc, "_log_fp"), "_log_fp attr should be deleted"
+
+
+def test_wait_and_finalize_no_log_fp_is_safe(tmp_path):
+    """Phase 4: proc 无 _log_fp 时 wait_and_finalize 不报错。"""
+    store = JobStateStore(base_dir=str(tmp_path / "state" / "jobs"))
+    store.write_atomic("job_nolog", {"job_id": "job_nolog", "status": "running"})
+
+    proc = MagicMock()
+    proc.pid = 2
+    proc.wait = AsyncMock(return_value=0)
+    # 不设 _log_fp
+
+    instance = InstanceState(max_concurrent=4, instance_id="i")
+    asyncio.run(instance.try_acquire("job_nolog"))
+    # 不应抛 AttributeError
+    asyncio.run(wait_and_finalize("job_nolog", proc, store, instance))
 
 
 def test_wait_and_finalize_marks_completed_on_zero(tmp_path):

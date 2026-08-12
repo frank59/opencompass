@@ -9,10 +9,11 @@
 #     bash opencompass-app/scripts/docker-test.sh
 #     PORT=8081 bash opencompass-app/scripts/docker-test.sh
 #
-# 端点覆盖（9 个）：
+# 端点覆盖（10 个）：
 #     MVP (4): POST /jobs, GET /jobs/{id}, GET /workers/me/free, GET /health
 #     Phase 2 (3): GET /jobs (list), POST /jobs/{id}/stop, DELETE /jobs/{id}
 #     Phase 3 (2): PATCH /workers/me/capacity, /health 503 gate (recover 期间)
+#     Phase 4 (1): GET /jobs/{id}/log（分页 + tail）
 
 set -euo pipefail
 
@@ -138,6 +139,43 @@ if [[ "$code" == "200" && -n "$got_status" && "$got_status" != "?" ]]; then
     ok "T3 GET /jobs/{id} 200 + status=$got_status"
 else
     fail "T3 GET /jobs/{id} (code=$code body=$body)"
+fi
+
+# === T10: GET /jobs/{id}/log (Phase 4) ===
+# 在 DELETE 之前测 — state 存在，log_path 也在 state 里。子进程可能已写少量
+# 日志到 opencompass.log，也可能因为没 GPU/API key 已经退出（文件可能为空），
+# 这都不影响端点契约验证：200 + 合法 JSON 结构。
+log "=== T10: GET /api/v1/jobs/{id}/log ==="
+code=$(curl -s -o /tmp/r.json -w '%{http_code}' "$BASE/api/v1/jobs/$JOB_ID/log")
+body=$(cat /tmp/r.json)
+log_path=$(jq_field '["log_path"]' "$body" 2>/dev/null || echo "")
+total=$(jq_field '["total_lines"]' "$body" 2>/dev/null || echo "?")
+returned=$(jq_field '["returned_lines"]' "$body" 2>/dev/null || echo "?")
+if [[ "$code" == "200" && "$log_path" == *"opencompass.log" ]]; then
+    ok "T10 GET /log 200 + log_path contains opencompass.log (total=$total returned=$returned)"
+else
+    fail "T10 GET /log (code=$code log_path=$log_path body=$body)"
+fi
+
+# === T10b: tail=true & limit ===
+log "=== T10b: GET /log?tail=true&limit=10 ==="
+code=$(curl -s -o /tmp/r.json -w '%{http_code}' "$BASE/api/v1/jobs/$JOB_ID/log?tail=true&limit=10")
+body=$(cat /tmp/r.json)
+returned=$(jq_field '["returned_lines"]' "$body" 2>/dev/null || echo "?")
+start=$(jq_field '["start_line"]' "$body" 2>/dev/null || echo "?")
+if [[ "$code" == "200" ]]; then
+    ok "T10b /log tail=10 200 + start=$start returned=$returned"
+else
+    fail "T10b /log tail=10 (code=$code body=$body)"
+fi
+
+# === T10c: GET /log 未知 job → 404 ===
+log "=== T10c: GET /log unknown job → 404 ==="
+code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v1/jobs/no_such_job_xyz/log")
+if [[ "$code" == "404" ]]; then
+    ok "T10c /log unknown job 404"
+else
+    fail "T10c /log unknown job (expected 404 got $code)"
 fi
 
 # === T4: GET /jobs (列表，本实例过滤) ===

@@ -4,7 +4,7 @@
 # 流程：
 #   1. 启动服务（smoke_bootstrap.py 在 8080 起 uvicorn）
 #   2. 等待 /health 就绪
-#   3. 顺序执行 17 项端点 + 错误路径冒烟测试
+#   3. 顺序执行 18 项端点 + 错误路径冒烟测试
 #   4. 关闭服务 + 清理临时数据
 #   5. 输出 PASS/FAIL 汇总，exit code = 失败数
 #
@@ -494,6 +494,71 @@ EOF
     fi
 }
 
+t18_get_log_endpoint() {
+    section "T18: GET /api/v1/jobs/{id}/log (Phase 4 日志分页)"
+    # 创建新 job 测 log 端点 — smoke 用 fake OC 子进程，可能不会写日志内容，
+    # 这里只验证端点契约（200 + 合法 JSON 结构 + log_path 正确指向）。
+    local job_id="smoke_log_$(date +%s)"
+    local req
+    req=$(cat <<JSON
+{
+  "job_id": "${job_id}",
+  "datasets": [{"abbr": "gsm8k"}],
+  "models": [{
+    "type": "opencompass.models.openai_api.OpenAISDK",
+    "path": "qwen",
+    "key": "EMPTY",
+    "openai_api_base": "https://example.invalid/v1"
+  }]
+}
+JSON
+)
+    local code body
+    code=$(curl -s -o /tmp/r.json -w "%{http_code}" -X POST "${BASE}/api/v1/jobs" \
+        -H "Content-Type: application/json" -d "$req")
+    if [[ "$code" != "201" && "$code" != "202" ]]; then
+        fail "T18 创建 job 失败 (code=$code body=$(cat /tmp/r.json))"
+        return
+    fi
+
+    # T18a: GET /log 默认（start_line=0 limit=100）
+    code=$(curl -s -o /tmp/r.json -w "%{http_code}" "${BASE}/api/v1/jobs/${job_id}/log")
+    body=$(cat /tmp/r.json)
+    local log_path total returned
+    log_path=$(jq_field '["log_path"]' "$body" 2>/dev/null || echo "")
+    total=$(jq_field '["total_lines"]' "$body" 2>/dev/null || echo "?")
+    returned=$(jq_field '["returned_lines"]' "$body" 2>/dev/null || echo "?")
+    if [[ "$code" == "200" && "$log_path" == *"opencompass.log" ]]; then
+        ok "T18a GET /log 200 + log_path 包含 opencompass.log (total=$total returned=$returned)"
+    else
+        fail "T18a GET /log (code=$code log_path=$log_path body=$body)"
+    fi
+
+    # T18b: tail=true&limit=5
+    code=$(curl -s -o /tmp/r.json -w "%{http_code}" "${BASE}/api/v1/jobs/${job_id}/log?tail=true&limit=5")
+    body=$(cat /tmp/r.json)
+    returned=$(jq_field '["returned_lines"]' "$body" 2>/dev/null || echo "?")
+    start=$(jq_field '["start_line"]' "$body" 2>/dev/null || echo "?")
+    if [[ "$code" == "200" ]]; then
+        ok "T18b /log tail=5 200 + start=$start returned=$returned"
+    else
+        fail "T18b /log tail=5 (code=$code body=$body)"
+    fi
+
+    # T18c: GET /log 未知 job → 404
+    code=$(curl -s -o /dev/null -w "%{http_code}" "${BASE}/api/v1/jobs/no_such_log_xyz/log")
+    if [[ "$code" == "404" ]]; then
+        ok "T18c /log 未知 job 404"
+    else
+        fail "T18c /log 未知 job (expected 404 got $code)"
+    fi
+
+    # 清理：停止并删除 job（即使有残留也不影响其他测试）
+    curl -s -o /dev/null -X POST "${BASE}/api/v1/jobs/${job_id}/stop" || true
+    sleep 2  # 等 stop → completed
+    curl -s -o /dev/null -X DELETE "${BASE}/api/v1/jobs/${job_id}" || true
+}
+
 # ---------- 主流程 ----------
 run_tests() {
     local t
@@ -503,7 +568,7 @@ run_tests() {
              t08a_get_missing_404 t08b_stop_missing_404 t09_duplicate_job_409 \
              t10_unknown_model_422 t11_cross_instance_403 t12_health_final \
              t13_log_no_panic t14_patch_capacity_success t15_patch_capacity_zero_422 \
-             t16_patch_capacity_below_running_409 t17_recovery_e2e; do
+             t16_patch_capacity_below_running_409 t17_recovery_e2e t18_get_log_endpoint; do
         if should_run "$t"; then
             "$t"
         fi

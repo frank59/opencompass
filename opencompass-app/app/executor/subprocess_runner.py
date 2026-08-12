@@ -4,9 +4,16 @@
     config_path = .../<job_id>/<run_dir>/configs/<job_id>.py
     -w 指向    = .../<job_id>/
     -r 指向    = <run_dir>
+
+日志落盘（Phase 4）：
+    log_path = .../<job_id>/<run_dir>/logs/opencompass.log
+    stdout/stderr → log_path（合并）
+    log_fp 挂在 proc._log_fp 上，jobs.py 不感知，wait_and_finalize 不关
+    （Python GC 关 fd 会导致子进程 SIGPIPE，所以保留引用至进程退出）。
 """
 import asyncio
 from pathlib import Path
+from typing import IO
 
 from app.core.state import InstanceState
 from app.models.enums import JobStatus
@@ -14,8 +21,20 @@ from app.stores.nfs_state import JobStateStore
 from app.utils.time import now_iso
 
 
-async def start(job_id: str, config_path: str) -> asyncio.subprocess.Process:
-    """按规范构造 opencompass 子进程命令并启动。返回进程对象。"""
+async def start(
+    job_id: str,
+    config_path: str,
+    log_path: Path | None = None,
+) -> asyncio.subprocess.Process:
+    """按规范构造 opencompass 子进程命令并启动。返回进程对象。
+
+    Args:
+        job_id: 任务 ID（仅用于日志）。
+        config_path: 生成好的 OC 配置文件绝对路径。
+        log_path: stdout/stderr 日志落盘路径。
+            - 给出时：stdout/stderr 合并写入此文件（unbuffered）。
+            - None：保持旧 PIPE 行为（仅用于单测；生产必须传）。
+    """
     config_p = Path(config_path)
     run_dir = config_p.parent.parent
     cmd = [
@@ -26,11 +45,26 @@ async def start(job_id: str, config_path: str) -> asyncio.subprocess.Process:
         "-r",
         run_dir.name,
     ]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
+
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        # buffering=0 让子进程 write() 立即落盘，否则 buffered 后台线程 flush
+        # 会在进程异常退出时丢日志。
+        log_fp: IO[bytes] | None = open(log_path, "wb", buffering=0)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=log_fp,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        # 必须保留 log_fp 引用 — Python GC 关闭 fd 会让子进程收到 SIGPIPE
+        # 触发 BrokenPipeError，导致长任务提前失败。
+        proc._log_fp = log_fp  # type: ignore[attr-defined]
+    else:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
     return proc
 
 
@@ -66,6 +100,9 @@ async def wait_and_finalize(
     rc = await proc.wait()
     current = state_store.read(job_id)
     if current is None:
+        # 子进程退出后关闭 log_fp（如果 start() 时打开过）— 必须在 release 前关，
+        # 否则文件描述符会泄漏。
+        _close_log_fp(proc)
         await instance_state.release(job_id)
         return
 
@@ -86,4 +123,21 @@ async def wait_and_finalize(
         "exit_code": rc,
         "error_message": err,
     })
+    _close_log_fp(proc)
     await instance_state.release(job_id)
+
+
+def _close_log_fp(proc: asyncio.subprocess.Process) -> None:
+    """关闭挂在 proc 上的 log_fp（如有）。容错：fd 可能已关。"""
+    log_fp = getattr(proc, "_log_fp", None)
+    if log_fp is None:
+        return
+    try:
+        log_fp.close()
+    except Exception:
+        pass
+    finally:
+        try:
+            del proc._log_fp  # type: ignore[attr-defined]
+        except AttributeError:
+            pass

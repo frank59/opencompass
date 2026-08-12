@@ -40,7 +40,7 @@ def client(fake_yaml, monkeypatch):
 
     import app.executor.subprocess_runner as sr
 
-    async def fake_start(job_id, config_path):
+    async def fake_start(job_id, config_path, log_path=None):
         proc = AsyncMock()
         proc.pid = 99999
         proc.wait = AsyncMock(return_value=0)
